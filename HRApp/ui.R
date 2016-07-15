@@ -10,7 +10,7 @@ library(leaflet)
 shinyUI(fluidPage(
   
   # application title
-  titlePanel("Home Range App"),
+  titlePanel("Home Range App v1"),
   
   # sidebar with file input 
   sidebarLayout(
