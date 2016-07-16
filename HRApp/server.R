@@ -21,18 +21,21 @@ UTM_zone <- function(m) {
 # Define server logic required to render a dynamic map
 shinyServer(function(input, output) {
   
-  # create empty matrix
-  rv <- reactiveValues(m = matrix(nrow = 0,ncol=2),l = NULL)
-    
-  # init session object matcoords <- NULL
+  # reactive values :
+  #   m = coordinates matrix
+  #   rkud = UD raster
+  # init with NULL
+  rv <- reactiveValues(m = NULL, kud = NULL)
   observeEvent(input$fichier1, {
-    inFile <- input$fichier1
-    #validate(need(!is.null(inFile), "Please choose a file"))
-    df <- read.table(inFile$datapath, header=T, sep="\t")
-    #validate(identical(c('LON','LAT') %in% colnames(df), c(T,T)), "Input file must have LON and LAT columns")
-    rv$m <- as.matrix(df[,c("LON","LAT")])
+    in_file <- input$fichier1
+    rv$m <- try({
+      df <- read.table(in_file$datapath, header=T, sep="\t")
+      m <- as.matrix(df[,c("LON","LAT")])
+      mfilter <- (-180 <= m[,'LON'] & m[,'LON'] <= 180 & -90 <= m[,'LAT'] & m[,'LAT'] <= 90)
+      m[mfilter,]
+      })
   })
-  
+
   observeEvent(input$go, {
     longlat_coords <- rv$m
     crs_longlat <- CRS("+proj=longlat +datum=WGS84 +no_defs")
@@ -48,13 +51,9 @@ shinyServer(function(input, output) {
       coordinates(mg) <- ~x1+x2
       spixg <- SpatialPixels(mg)
       setProgress(value=0.2, message='Estimating UD')
-      KUD <- kernelUD(relocs, grid=spixg, h="href")
-      #VUD <- getvolumeUD(KUD)
-      #Raster_VUD <- raster(VUD)
+      rv$kud <- kernelUD(relocs, grid=spixg, h="href")
       setProgress(value=0.8, message='Estimating 95% home range from UD')
-      #vIsolignes <- seq(50, 95, 5)
-      #Shapefile_Isolignes <- rasterToContour(Raster_VUD,levels=vIsolignes)
-      hrplyg <- getverticeshr(KUD)
+      hrplyg <- getverticeshr(rv$kud)
       proj4string(hrplyg) <- crs_utm
       hrplyg2 <- spTransform(hrplyg, crs_longlat)
       setProgress(1)
@@ -66,11 +65,29 @@ shinyServer(function(input, output) {
   })
    
   output$carte <- renderLeaflet({
-    validate(need(dim(rv$m)[1] > 0, "Please choose a file"))
+    validate(need(!inherits(rv$m, "try-error"), "Parsing error. Please check input file."),
+             need(!is.null(rv$m), "Empty data. Please select input file.")
+             )
     leaflet(data=rv$m) %>%
       addTiles() %>% addMarkers(clusterOptions = markerClusterOptions())
   })
   
-  output$nbpoints <- reactive({dim(rv$m)[1]})
+  output$nbpoints <- renderText({
+    validate(need(!inherits(rv$m, "try-error"), "Empty"),
+             need(!is.null(rv$m), "Empty")
+    )
+    dim(rv$m)[1]
+    })
+
+  output$href <- renderText({
+    validate(need(!inherits(rv$m, "try-error"), "Empty"),
+             need(!is.null(rv$m), "Empty")
+    )
+    if (dim(rv$m)[1] > 0) {
+      "href = dummy"
+    } else {
+      "href = NA"
+    }
+  })
   
 })
