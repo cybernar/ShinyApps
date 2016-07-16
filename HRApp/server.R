@@ -19,14 +19,22 @@ UTM_zone <- function(m) {
 }
 
 # Define server logic required to render a dynamic map
-shinyServer(function(input, output) {
+shinyServer(function(input, output, clientData, session) {
   
   # reactive values :
-  #   m = coordinates matrix
+  #   m = coordinates (class matrix)
+  #   relocs = relocs in UTM (class SpatialPoints)
   #   rkud = UD raster
   # init with NULL
-  rv <- reactiveValues(m = NULL, kud = NULL)
+  rv <- reactiveValues(m = NULL, relocs = NULL, hrplyg = NULL)
+  
+  crs_longlat <- CRS("+proj=longlat +datum=WGS84 +no_defs")
+  crs_utm <- NULL
+  kud <- NULL
+
   observeEvent(input$fichier1, {
+    crs_utm <<- NULL
+    kud <<- NULL
     in_file <- input$fichier1
     rv$m <- try({
       df <- read.table(in_file$datapath, header=T, sep="\t")
@@ -34,60 +42,107 @@ shinyServer(function(input, output) {
       mfilter <- (-180 <= m[,'LON'] & m[,'LON'] <= 180 & -90 <= m[,'LAT'] & m[,'LAT'] <= 90)
       m[mfilter,]
       })
+    rv$relocs <- try({
+      relocs <- NULL
+      if (dim(rv$m)[1] > 0) {
+        # transform points coordinates to UTM zone (derived from central location of the set)
+        utmz <- UTM_zone(rv$m)
+        withProgress(message = 'Transforming coords to UTM', value=0, {
+          crs_utm <<- paste0('+proj=utm +zone=', utmz[1], 
+                             ifelse(utmz[2]=='S', ' +south', ''),
+                             ' +datum=WGS84 +units=m +no_defs')
+          relocs_wgs84 <- SpatialPoints(rv$m, proj4string=crs_longlat)
+          relocs <- spTransform(relocs_wgs84, crs_utm)
+          setProgress(value=1)
+        })
+      }
+      relocs
+    })
+    rv$hrplyg <- NULL
   })
 
   observeEvent(input$go, {
-    longlat_coords <- rv$m
-    crs_longlat <- CRS("+proj=longlat +datum=WGS84 +no_defs")
-    utmz <- UTM_zone(longlat_coords)
-    crs_utm <- paste0('+proj=utm +zone=', utmz[1], 
-                      ifelse(utmz[2]=='S', ' +south', ''),
-                      ' +datum=WGS84 +units=m +no_defs')
-    # transform points coordinates to UTM zone (derived from central location of the set)
-    relocs_wgs84 <- SpatialPoints(longlat_coords, proj4string=crs_longlat)
-    withProgress(message = 'Transforming coordinates to UTM', value=0, {
-      relocs <- spTransform(relocs_wgs84, crs_utm)
-      mg <- makegrid(relocs, cellsize=100)
-      coordinates(mg) <- ~x1+x2
-      spixg <- SpatialPixels(mg)
-      setProgress(value=0.2, message='Estimating UD')
-      rv$kud <- kernelUD(relocs, grid=spixg, h="href")
-      setProgress(value=0.8, message='Estimating 95% home range from UD')
-      hrplyg <- getverticeshr(rv$kud)
+    withProgress(message = 'Estimating UD', value=0, {
+      kud <<- kernelUD(rv$relocs, grid=200, h=input$h)
+      setProgress(value=0.8, message=paste0('Getting HR from ',input$pud,'% UD'))
+      hrplyg <- getverticeshr(kud, percent=input$pud, unout='km2')
       proj4string(hrplyg) <- crs_utm
       hrplyg2 <- spTransform(hrplyg, crs_longlat)
       setProgress(1)
     })
-    
+    rv$hrplyg <- hrplyg
     proxy <- leafletProxy("carte")
-    proxy %>% addPolygons(data=hrplyg2)
+    proxy %>% addPolygons(layerId="HR", data=hrplyg2)
     
   })
    
   output$carte <- renderLeaflet({
     validate(need(!inherits(rv$m, "try-error"), "Parsing error. Please check input file."),
-             need(!is.null(rv$m), "Empty data. Please select input file.")
+             need(try(!is.null(rv$m) && dim(rv$m)[1] > 0), "Empty data. Please select input file.")
              )
     leaflet(data=rv$m) %>%
       addTiles() %>% addMarkers(clusterOptions = markerClusterOptions())
   })
   
   output$nbpoints <- renderText({
-    validate(need(!inherits(rv$m, "try-error"), "Empty"),
-             need(!is.null(rv$m), "Empty")
+    validate(need(!inherits(rv$m, "try-error"), "NA"),
+             need(!is.null(rv$m), "NA")
     )
     dim(rv$m)[1]
     })
 
   output$href <- renderText({
-    validate(need(!inherits(rv$m, "try-error"), "Empty"),
-             need(!is.null(rv$m), "Empty")
+    validate(need(!inherits(rv$relocs, "try-error"), "NA"),
+             need(!is.null(rv$relocs), "NA")
     )
-    if (dim(rv$m)[1] > 0) {
-      "href = dummy"
+    coords_UTM <- slot(rv$relocs,"coords")
+    n <- dim(coords_UTM)[1]
+    if (n > 0) {
+      sigma <- sqrt(0.5 * (var(coords_UTM[,1]) + var(coords_UTM[,2])))
+      href <- sigma * n ^ (-1/6)
+      updateNumericInput(session, 'h', label='h = ', value=round(href,0))
+      paste("href", "=", round(href,1))
     } else {
+      updateNumericInput(session, 'h', label='h = ', value=NA)
       "href = NA"
     }
   })
+  
+  output$size <- renderText({
+    validate(need(!inherits(rv$hrplyg, "try-error"), "NA"),
+             need(!is.null(rv$hrplyg), "NA")
+    )
+    hrplyg <- rv$hrplyg
+    hrplyg$area
+  })
+
+  observeEvent (input$pud, {
+    if (!is.null(kud)) {
+      withProgress(value=0, message=paste0('Getting HR from ',input$pud,'% UD'), {
+        hrplyg <- getverticeshr(kud, percent=input$pud, unout='km2')
+        proj4string(hrplyg) <- crs_utm
+        hrplyg2 <- spTransform(hrplyg, crs_longlat)
+        setProgress(1)
+      })
+      rv$hrplyg <- hrplyg
+      proxy <- leafletProxy("carte")
+      proxy %>% addPolygons(layerId="HR", data=hrplyg2)
+    }
+  })
+  
+  output$downloadSHP <- downloadHandler(
+    filename = function() { 
+      paste('export_shiny_UD',input$pud,'.zip', sep='') 
+    },
+    content = function(fname) {
+      tmpdir <- tempdir()
+      shpbasename <- paste0('export_shiny_UD',input$pud)
+      setwd(tempdir())
+      writeOGR(rv$hrplyg, tmpdir, shpbasename,'ESRI Shapefile',overwrite_layer=T)
+      zip(zipfile=fname, files=list.files(tmpdir,pattern=paste0("^",shpbasename,"\\.")))
+    },
+    contentType = "application/zip"
+  )
+  
   
 })
