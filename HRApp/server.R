@@ -24,7 +24,6 @@ shinyServer(function(input, output, clientData, session) {
   # reactive values :
   #   m = coordinates (class matrix)
   #   relocs = relocs in UTM (class SpatialPoints)
-  #   rkud = UD raster
   # init with NULL
   rv <- reactiveValues(m = NULL, relocs = NULL, hrplyg = NULL)
   
@@ -72,8 +71,7 @@ shinyServer(function(input, output, clientData, session) {
     })
     rv$hrplyg <- hrplyg
     proxy <- leafletProxy("carte")
-    proxy %>% addPolygons(layerId="HR", data=hrplyg2)
-    
+    proxy %>% addPolygons(layerId="HR", data=hrplyg2, color="#303", opacity=0.8, weight=2, fillColor="#303")
   })
    
   output$carte <- renderLeaflet({
@@ -81,7 +79,7 @@ shinyServer(function(input, output, clientData, session) {
              need(try(!is.null(rv$m) && dim(rv$m)[1] > 0), "Empty data. Please select input file.")
              )
     leaflet(data=rv$m) %>%
-      addTiles() %>% addMarkers(clusterOptions = markerClusterOptions())
+      addTiles() %>% addCircleMarkers(radius=2, stroke=F, fillOpacity=0.5, fillColor="#909")
   })
   
   output$nbpoints <- renderText({
@@ -126,7 +124,7 @@ shinyServer(function(input, output, clientData, session) {
       })
       rv$hrplyg <- hrplyg
       proxy <- leafletProxy("carte")
-      proxy %>% addPolygons(layerId="HR", data=hrplyg2)
+      proxy %>% addPolygons(layerId="HR", data=hrplyg2, color="#303", opacity=0.8, weight=2, fillColor="#303")
     }
   })
   
