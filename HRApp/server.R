@@ -26,7 +26,7 @@ shinyServer(function(input, output, clientData, session) {
   #   relocs = relocs in UTM (class SpatialPoints)
   #   hrplyg = HR polygon (class SpatialPolygon)
   # init with NULL
-  rv <- reactiveValues(m = NULL, relocs = NULL, hrplyg = NULL)
+  rv <- reactiveValues(hr=NULL)
   
   # session variables :
   #   crs_longlat = WGS84 CRS
@@ -37,46 +37,56 @@ shinyServer(function(input, output, clientData, session) {
   kud <- NULL
 
   # sequence 1 : txt input file is provided
-  # reinit reactive values (m, relocs, hrplyg)
-  observeEvent(input$fichier1, {
+  
+  # latlon matrix is reactive to input file
+  coord_mat <- reactive({
+    in_file <- input$fichier1
     crs_utm <<- NULL
     kud <<- NULL
-    in_file <- input$fichier1
-    # input file 2 latlon matrix
-    rv$m <- try({
+    rv$hr <- NULL
+    if (is.null(in_file))
+      return(NULL)
+    try({
       df <- read.table(in_file$datapath, header=T, sep="\t")
       m <- as.matrix(df[,c("LON","LAT")])
       mfilter <- (-180 <= m[,'LON'] & m[,'LON'] <= 180 & -90 <= m[,'LAT'] & m[,'LAT'] <= 90)
       m[mfilter,]
-      })
-    # latlon matrix to UTM SpatialPoints
-    rv$relocs <- try({
+    })
+  })
+  
+  # UTM SpatialPoints is reactive to latlon matrix
+  coordutm_sp <- reactive({
+    m <- coord_mat()
+    if (is.null(m))
+      return(NULL)
+    try({
       relocs <- NULL
-      if (dim(rv$m)[1] > 0) {
+      if (dim(m)[1] > 0) {
         # transform points coordinates to UTM zone (derived from central location of the set)
-        utmz <- UTM_zone(rv$m)
+        utmz <- UTM_zone(m)
         withProgress(message = 'Transforming coords to UTM', value=0, {
           crs_utm <<- paste0('+proj=utm +zone=', utmz[1], 
                              ifelse(utmz[2]=='S', ' +south', ''),
                              ' +datum=WGS84 +units=m +no_defs')
-          relocs_wgs84 <- SpatialPoints(rv$m, proj4string=crs_longlat)
+          relocs_wgs84 <- SpatialPoints(m, proj4string=crs_longlat)
           relocs <- spTransform(relocs_wgs84, crs_utm)
           setProgress(value=1)
         })
       }
       relocs
     })
-    # (re)init HR polygon
-    rv$hrplyg <- NULL
   })
+
+  # (re)init HR polygon
 
   # sequence 1 bis : leaflet output rendering is reactive to input matrix
   # check if input matrix is valid and not null
   output$carte <- renderLeaflet({
-    validate(need(!inherits(rv$m, "try-error"), "Parsing error. Please check input file."),
-             need(try(!is.null(rv$m) && dim(rv$m)[1] > 0), "Empty data. Please select input file.")
+    m <- coord_mat()
+    validate(need(!inherits(m, "try-error"), "Parsing error. Please check input file."),
+             need(try(!is.null(m) && dim(m)[1] > 0), "Empty data. Please select input file.")
     )
-    leaflet(data=rv$m) %>%
+    leaflet(data=m) %>%
       addTiles() %>% addCircleMarkers(radius=2, stroke=F, fillOpacity=0.5, fillColor="#909")
   })
   
@@ -84,18 +94,21 @@ shinyServer(function(input, output, clientData, session) {
   # check if input matrix is valid and not null
   # [nbpoints rendering make 'Estimate' button visible]
   output$nbpoints <- renderText({
-    validate(need(!inherits(rv$m, "try-error"), "NA"),
-             need(!is.null(rv$m), "NA")
+    m <- coord_mat()
+    validate(need(!inherits(m, "try-error"), "NA"),
+             need(!is.null(m), "NA")
     )
-    dim(rv$m)[1]
+    dim(m)[1]
   })
   
   # sequence 1 ter ... end
+  # display href (+ update h input)
   output$href <- renderText({
-    validate(need(!inherits(rv$relocs, "try-error"), "NA"),
-             need(!is.null(rv$relocs), "NA")
+    relocs <- coordutm_sp()
+    validate(need(!inherits(relocs, "try-error"), "NA"),
+             need(!is.null(relocs), "NA")
     )
-    coords_UTM <- slot(rv$relocs,"coords")
+    coords_UTM <- slot(relocs,"coords")
     n <- dim(coords_UTM)[1]
     if (n > 0) {
       sigma <- sqrt(0.5 * (var(coords_UTM[,1]) + var(coords_UTM[,2])))
@@ -114,33 +127,33 @@ shinyServer(function(input, output, clientData, session) {
   # (since 'Estimate' button is visible)
   observeEvent(input$go, {
     withProgress(message = 'Estimating UD', value=0, {
-      kud <<- kernelUD(rv$relocs, grid=200, h=input$h)
+      kud <<- kernelUD(coordutm_sp(), grid=200, h=input$h)
       setProgress(value=0.8, message=paste0('Getting HR from ',input$pud,'% UD'))
-      hrplyg <- getverticeshr(kud, percent=input$pud, unout='km2')
-      proj4string(hrplyg) <- crs_utm
-      hrplyg2 <- spTransform(hrplyg, crs_longlat)
+      plyg_utm <- getverticeshr(kud, percent=input$pud, unout='km2')
+      proj4string(plyg_utm) <- crs_utm
+      plyg_longlat <- spTransform(plyg_utm, crs_longlat)
       setProgress(1)
     })
-    rv$hrplyg <- hrplyg
+    rv$hr <- plyg_utm
     proxy <- leafletProxy("carte")
-    proxy %>% addPolygons(layerId="HR", data=hrplyg2, color="#303", opacity=0.8, weight=2, fillColor="#303")
+    proxy %>% addPolygons(layerId="HR", data=plyg_longlat, color="#303", opacity=0.8, weight=2, fillColor="#303")
   })
    
   
   # sequence 3 : HR polygon + leaflet output updating
-  #   is reactive to 'Estimate' button clicking
+  #   is reactive to '% UD' slider change
   #   ...ONLY IF kud is not null !!
   observeEvent (input$pud, {
     if (!is.null(kud)) {
       withProgress(value=0, message=paste0('Getting HR from ',input$pud,'% UD'), {
-        hrplyg <- getverticeshr(kud, percent=input$pud, unout='km2')
-        proj4string(hrplyg) <- crs_utm
-        hrplyg2 <- spTransform(hrplyg, crs_longlat)
+        plyg_utm <- getverticeshr(kud, percent=input$pud, unout='km2')
+        proj4string(plyg_utm) <- crs_utm
+        plyg_longlat <- spTransform(plyg_utm, crs_longlat)
         setProgress(1)
       })
-      rv$hrplyg <- hrplyg
+      rv$hr <- plyg_utm
       proxy <- leafletProxy("carte")
-      proxy %>% addPolygons(layerId="HR", data=hrplyg2, color="#303", opacity=0.8, weight=2, fillColor="#303")
+      proxy %>% addPolygons(layerId="HR", data=plyg_longlat, color="#303", opacity=0.8, weight=2, fillColor="#303")
     }
   })
   
@@ -148,13 +161,13 @@ shinyServer(function(input, output, clientData, session) {
   #   is reactive to HR polygon computing
   # ['size' rendering make 'Download' button visible]
   output$size <- renderText({
-    validate(need(!inherits(rv$hrplyg, "try-error"), "NA"),
-             need(!is.null(rv$hrplyg), "NA")
+    validate(need(!inherits(rv$hr, "try-error"), "NA"),
+             need(!is.null(rv$hr), "NA")
     )
-    hrplyg <- rv$hrplyg
-    hrplyg$area
-  })
-  
+    hr <- rv$hr
+    hr$area
+  })  
+
   # sequence 4 : shapefile creation & transfer 
   #   is reactive to 'Download' button clicking
   output$downloadSHP <- downloadHandler(
@@ -165,7 +178,8 @@ shinyServer(function(input, output, clientData, session) {
       tmpdir <- tempdir()
       shpbasename <- paste0('export_shiny_UD',input$pud)
       setwd(tempdir())
-      writeOGR(rv$hrplyg, tmpdir, shpbasename,'ESRI Shapefile',overwrite_layer=T)
+      hr <- rv$hr
+      writeOGR(hr, tmpdir, shpbasename,'ESRI Shapefile',overwrite_layer=T)
       zip(zipfile=fname, files=list.files(tmpdir,pattern=paste0("^",shpbasename,"\\.")))
     },
     contentType = "application/zip"
