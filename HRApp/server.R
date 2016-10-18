@@ -22,9 +22,7 @@ UTM_zone <- function(m) {
 shinyServer(function(input, output, clientData, session) {
   
   # reactive values :
-  #   m = coordinates (class matrix)
-  #   relocs = relocs in UTM (class SpatialPoints)
-  #   hrplyg = HR polygon (class SpatialPolygon)
+  #   hr = HR polygon in UTM CRS (class SpatialPolygon)
   # init with NULL
   rv <- reactiveValues(hr=NULL)
   
@@ -77,8 +75,6 @@ shinyServer(function(input, output, clientData, session) {
     })
   })
 
-  # (re)init HR polygon
-
   # sequence 1 bis : leaflet output rendering is reactive to input matrix
   # check if input matrix is valid and not null
   output$carte <- renderLeaflet({
@@ -87,7 +83,14 @@ shinyServer(function(input, output, clientData, session) {
              need(try(!is.null(m) && dim(m)[1] > 0), "Empty data. Please select input file.")
     )
     leaflet(data=m) %>%
-      addTiles() %>% addCircleMarkers(radius=2, stroke=F, fillOpacity=0.5, fillColor="#909")
+      addTiles(group = "OSM (default)") %>%
+      addProviderTiles("OpenTopoMap", group = "OSM (topo)") %>%      
+      addProviderTiles("Esri.WorldImagery", group = "ESRI Sat") %>%      
+      addCircleMarkers(radius=2, stroke=F, fillOpacity=0.5, fillColor="#909") %>%
+      addLayersControl(
+        baseGroups = c("OSM (default)", "OSM (topo)", "ESRI Sat"),
+        options = layersControlOptions(collapsed = FALSE)
+      )
   })
   
   # sequence 1 ter : nbpoints + href rendering and h input filling is reactive to input matrix
