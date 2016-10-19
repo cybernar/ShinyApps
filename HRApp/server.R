@@ -1,5 +1,6 @@
 #
-# This is the server logic of a Shiny web application. 
+# Home Range App
+# This is the server logic of Shiny web application. 
 #
 
 library(shiny)
@@ -18,7 +19,6 @@ UTM_zone <- function(m) {
   c(n_zone, hemi)
 }
 
-# define server logic 
 shinyServer(function(input, output, clientData, session) {
   
   # reactive values :
@@ -33,7 +33,15 @@ shinyServer(function(input, output, clientData, session) {
   crs_longlat <- CRS("+proj=longlat +datum=WGS84 +no_defs")
   crs_utm <- NULL
   kud <- NULL
-
+  # marker & polygon style 
+  mk_rad <- 2
+  mk_col <-"#C00"
+  mk_opa <- 0.6
+  pl_col <- "#303"
+  pl_wgt <- 2
+  pl_opa <- 0.8
+  
+  
   # sequence 1 : txt input file is provided
   
   # latlon matrix is reactive to input file
@@ -82,16 +90,52 @@ shinyServer(function(input, output, clientData, session) {
     validate(need(!inherits(m, "try-error"), "Parsing error. Please check input file."),
              need(try(!is.null(m) && dim(m)[1] > 0), "Empty data. Please select input file.")
     )
-    leaflet(data=m) %>%
-      addTiles(group = "OSM (default)") %>%
-      addProviderTiles("OpenTopoMap", group = "OSM (topo)") %>%      
+    #lid_m <- paste0("m_",seq_len(dim(m)[1]))
+    
+    leaflet() %>%
+      addTiles(group = "OSM Mapnik") %>%
+      addProviderTiles("OpenTopoMap", group = "OSM OpenTopoMap") %>%      
       addProviderTiles("Esri.WorldImagery", group = "ESRI Sat") %>%      
-      addCircleMarkers(radius=2, stroke=F, fillOpacity=0.5, fillColor="#909") %>%
+      addMarkers(data=m, clusterOptions = markerClusterOptions(), group="data (clustered)") %>%
+      addCircleMarkers(data=m, radius=mk_rad, stroke=F, fillOpacity=mk_opa, fillColor=mk_col, group="data (individual)") %>%
       addLayersControl(
-        baseGroups = c("OSM (default)", "OSM (topo)", "ESRI Sat"),
-        options = layersControlOptions(collapsed = FALSE)
-      )
+          baseGroups = c("OSM Mapnik", "OSM OpenTopoMap", "ESRI Satellite"),
+          overlayGroups = c("data (individual)", "data (clustered)"),
+          options = layersControlOptions(collapsed = FALSE)
+        ) %>%
+      hideGroup("data (individual)")
   })
+  output$cartenote <- renderUI({
+    m <- coord_mat()
+    notify <- ""
+    validate(need(!inherits(m, "try-error"), notify),
+             need(!is.null(m), notify)
+    )
+    if (dim(m)[1] > 1000) {
+      notify <- p("",br(),"NOTE : layer",strong("data(individual)"),"may be slow to render for large datasets")
+    }
+    notify
+  })
+  
+  # checkbox to swith between clustered / individual points
+  # observeEvent(input$checkmap, {
+  #   m <- coord_mat()
+  #   validate(need(!inherits(m, "try-error"), "Parsing error. Please check input file."),
+  #            need(try(!is.null(m) && dim(m)[1] > 0), "Empty data. Please select input file.")
+  #   )
+  #   #lid_m <- paste0("m_",seq_len(dim(m)[1]))
+  #   if (input$checkmap) {
+  #     proxy <- leafletProxy("carte")
+  #     proxy %>% clearMarkers()
+  #     proxy %>% addMarkers(data=m, clusterOptions = markerClusterOptions())
+  #   }
+  #   else {
+  #     proxy <- leafletProxy("carte")
+  #     # ?? marche pas # proxy %>% removeMarker(layerId=lid_m)
+  #     proxy %>% clearMarkerClusters()
+  #     proxy %>% addCircleMarkers(data=m, radius=2, stroke=F, fillOpacity=0.5, fillColor="#909")
+  #   }
+  # })
   
   # sequence 1 ter : nbpoints + href rendering and h input filling is reactive to input matrix
   # check if input matrix is valid and not null
@@ -139,7 +183,7 @@ shinyServer(function(input, output, clientData, session) {
     })
     rv$hr <- plyg_utm
     proxy <- leafletProxy("carte")
-    proxy %>% addPolygons(layerId="HR", data=plyg_longlat, color="#303", opacity=0.8, weight=2, fillColor="#303")
+    proxy %>% addPolygons(layerId="HR", data=plyg_longlat, color=pl_col, opacity=pl_opa, weight=pl_wgt, fillColor=pl_col)
   })
    
   
@@ -156,7 +200,7 @@ shinyServer(function(input, output, clientData, session) {
       })
       rv$hr <- plyg_utm
       proxy <- leafletProxy("carte")
-      proxy %>% addPolygons(layerId="HR", data=plyg_longlat, color="#303", opacity=0.8, weight=2, fillColor="#303")
+      proxy %>% addPolygons(layerId="HR", data=plyg_longlat, color=pl_col, opacity=pl_opa, weight=pl_wgt, fillColor=pl_col)
     }
   })
   
@@ -187,6 +231,5 @@ shinyServer(function(input, output, clientData, session) {
     },
     contentType = "application/zip"
   )
-  
-  
+
 })
