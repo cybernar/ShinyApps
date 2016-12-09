@@ -18,7 +18,7 @@ shinyUI(fluidPage(
       fileInput(
         'fichier1', 
         label='Select input text file :', 
-        accept=c('text/plain','text/tab-separated-values')
+        accept=c('text/plain', 'text/tab-separated-values', '.txt')
       ),
       div('N points = ', textOutput('nbpoints',inline=TRUE)),
       conditionalPanel(condition="output.nbpoints > 0", 
