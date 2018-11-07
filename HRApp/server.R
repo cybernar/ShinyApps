@@ -6,6 +6,7 @@
 library(shiny)
 library(sp)
 library(rgdal)
+library(rgeos)
 library(raster)
 library(adehabitatHR)
 library(leaflet)
